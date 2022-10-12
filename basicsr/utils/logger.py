@@ -3,6 +3,7 @@ import logging
 import time
 
 from .dist_util import get_dist_info, master_only
+import torchvision.utils as vutils
 
 initialized_logger = {}
 
@@ -103,15 +104,23 @@ class MessageLogger():
             message += f'[eta: {eta_str}, '
             message += f'time (data): {iter_time:.3f} ({data_time:.3f})] '
 
+        visual_key_set = {'lq', 'result', 'gt'}
+
         # other items, especially losses
         for k, v in log_vars.items():
-            message += f'{k}: {v:.4e} '
-            # tensorboard logger
-            if self.use_tb_logger and 'debug' not in self.exp_name:
-                if k.startswith('l_'):
-                    self.tb_logger.add_scalar(f'losses/{k}', v, current_iter)
-                else:
-                    self.tb_logger.add_scalar(k, v, current_iter)
+            if k not in visual_key_set:
+                message += f'{k}: {v:.4e} '
+                # tensorboard logger
+                if self.use_tb_logger and 'debug' not in self.exp_name:
+                    if k.startswith('l_'):
+                        self.tb_logger.add_scalar(f'losses/{k}', v, current_iter)
+                    else:
+                        self.tb_logger.add_scalar(k, v, current_iter)
+            else:
+                if self.use_tb_logger and 'debug' not in self.exp_name:
+                    v = vutils.make_grid(v.detach().cpu(), nrow=v.shape[0], padding=0, normalize=True, value_range=(0, 1))
+                    self.tb_logger.add_image(k, v, current_iter)
+
         self.logger.info(message)
 
 
