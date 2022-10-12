@@ -158,7 +158,8 @@ class SRModel(BaseModel):
             self.test()
 
             visuals = self.get_current_visuals()
-            self._log_validation_visual_results(current_iter, dataset_name, tb_logger, visuals, idx)
+            if self.opt['val'].get('visual', False):
+                self._log_validation_visual_results(current_iter, dataset_name, tb_logger, visuals, idx)
             sr_img = tensor2img([visuals['result']])
             metric_data['img'] = sr_img
             if 'gt' in visuals:
