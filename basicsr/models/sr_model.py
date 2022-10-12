@@ -9,6 +9,7 @@ from basicsr.metrics import calculate_metric
 from basicsr.utils import get_root_logger, imwrite, tensor2img
 from basicsr.utils.registry import MODEL_REGISTRY
 from .base_model import BaseModel
+import torchvision.utils as vutils
 
 
 @MODEL_REGISTRY.register()
@@ -129,54 +130,6 @@ class SRModel(BaseModel):
                 self.output = self.net_g(self.lq)
             self.net_g.train()
 
-    def test_selfensemble(self):
-        # TODO: to be tested
-        # 8 augmentations
-        # modified from https://github.com/thstkdgus35/EDSR-PyTorch
-
-        def _transform(v, op):
-            # if self.precision != 'single': v = v.float()
-            v2np = v.data.cpu().numpy()
-            if op == 'v':
-                tfnp = v2np[:, :, :, ::-1].copy()
-            elif op == 'h':
-                tfnp = v2np[:, :, ::-1, :].copy()
-            elif op == 't':
-                tfnp = v2np.transpose((0, 1, 3, 2)).copy()
-
-            ret = torch.Tensor(tfnp).to(self.device)
-            # if self.precision == 'half': ret = ret.half()
-
-            return ret
-
-        # prepare augmented data
-        lq_list = [self.lq]
-        for tf in 'v', 'h', 't':
-            lq_list.extend([_transform(t, tf) for t in lq_list])
-
-        # inference
-        if hasattr(self, 'net_g_ema'):
-            self.net_g_ema.eval()
-            with torch.no_grad():
-                out_list = [self.net_g_ema(aug) for aug in lq_list]
-        else:
-            self.net_g.eval()
-            with torch.no_grad():
-                out_list = [self.net_g_ema(aug) for aug in lq_list]
-            self.net_g.train()
-
-        # merge results
-        for i in range(len(out_list)):
-            if i > 3:
-                out_list[i] = _transform(out_list[i], 't')
-            if i % 4 > 1:
-                out_list[i] = _transform(out_list[i], 'h')
-            if (i % 4) % 2 == 1:
-                out_list[i] = _transform(out_list[i], 'v')
-        output = torch.cat(out_list, dim=0)
-
-        self.output = output.mean(dim=0, keepdim=True)
-
     def dist_validation(self, dataloader, current_iter, tb_logger, save_img):
         if self.opt['rank'] == 0:
             self.nondist_validation(dataloader, current_iter, tb_logger, save_img)
@@ -205,6 +158,7 @@ class SRModel(BaseModel):
             self.test()
 
             visuals = self.get_current_visuals()
+            self._log_validation_visual_results(current_iter, dataset_name, tb_logger, visuals, idx)
             sr_img = tensor2img([visuals['result']])
             metric_data['img'] = sr_img
             if 'gt' in visuals:
@@ -262,6 +216,16 @@ class SRModel(BaseModel):
         if tb_logger:
             for metric, value in self.metric_results.items():
                 tb_logger.add_scalar(f'metrics/{dataset_name}/{metric}', value, current_iter)
+
+    def _log_validation_visual_results(self, current_iter, dataset_name, tb_logger, visuals, idx):
+        log_str = f'Validation {dataset_name} visual results\n'
+        logger = get_root_logger()
+        if idx == 0:
+            logger.info(log_str)
+        if tb_logger:
+            for k, v in visuals.items():
+                v = vutils.make_grid(v.detach().cpu(), nrow=v.shape[0], padding=0, normalize=True, value_range=(0, 1))
+                tb_logger.add_image(f'val/{dataset_name}/{idx}/{k}', v, current_iter)
 
     def get_current_visuals(self):
         out_dict = OrderedDict()
